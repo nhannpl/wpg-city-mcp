@@ -125,6 +125,25 @@ async def plan_trip(origin: str, destination: str, mode: str = "depart-after") -
     formatted_origin = await format_location(origin)
     formatted_dest = await format_location(destination)
 
+    # Validation to identify which location failed
+    # Valid formats from format_location will be stops/, geo/, or landmaks (mapped to stops/geo)
+    # The API also technically supports 'intersection/' and 'addresses/' if known keys are used.
+    valid_prefixes = ("stops/", "geo/", "intersection/", "addresses/", "monuments/")
+    
+    # Helper to check if a location string appears "resolved" (valid transit format or simple stop number)
+    def is_valid_format(loc: str) -> bool:
+        if loc.isdigit(): return True
+        # Check prefixes
+        for prefix in valid_prefixes:
+            if loc.startswith(prefix): return True
+        return False
+
+    if not is_valid_format(formatted_origin):
+        return f"Error: Could not find/resolve origin: '{origin}'. Try checking the spelling (e.g. '143 Egesz') or using a stop number."
+        
+    if not is_valid_format(formatted_dest):
+        return f"Error: Could not find/resolve destination: '{destination}'. Try checking the spelling or using a stop number."
+
     params = {
         "api-key": config.TRANSIT_API_KEY,
         "origin": formatted_origin,
@@ -138,17 +157,6 @@ async def plan_trip(origin: str, destination: str, mode: str = "depart-after") -
         response = await client.get(url, params=params)
         
         if response.status_code != 200:
-            error_msg = response.text
-            if "Location must be formatted" in error_msg or "Location type must be one of" in error_msg:
-                return (
-                    f"Error: The location '{origin}' or '{destination}' could not be resolved.\n"
-                    "Please use one of the following formats:\n"
-                    "- Stop Number: '10625' or 'stops/10625'\n"
-                    "- Geographic Coordinates: 'geo/49.89,-97.13'\n"
-                    "- Address Key: 'addresses/12345' (if known)\n"
-                    "- Intersection Key: 'intersections/67890' (if known)\n"
-                    "Note: Automatic address search is currently unavailable."
-                )
             return f"Error planning trip: {response.status_code} - {response.text}"
             
         data = response.json()
@@ -189,10 +197,20 @@ async def plan_trip(origin: str, destination: str, mode: str = "depart-after") -
             
             if type_ == "walk":
                 w_time = seg_durations.get("walking", 0)
-                to_node = seg.get("to", {}).get("stop", {}).get("name") or seg.get("to", {}).get("intersection", {}).get("name") or "Destination"
-                result.append(f"  🚶 Walk to {to_node}")
-                result.append(f"     (approx {w_time} mins) • {start_seg} - {end_seg}")
                 
+                # Extract destination info with stop number if available
+                to_obj = seg.get("to", {})
+                if "stop" in to_obj:
+                    s = to_obj["stop"]
+                    to_node = f"{s.get('name', 'Stop')} (#{s.get('key', '')})"
+                elif "intersection" in to_obj:
+                    to_node = to_obj["intersection"].get("name", "Intersection")
+                elif "monument" in to_obj:
+                    to_node = to_obj["monument"].get("name", "Landmark")
+                else:
+                    to_node = "Destination"
+                    
+                result.append(f"  🚶 Walk to {to_node}")
                 result.append(f"     (approx {w_time} mins) • {start_seg} - {end_seg}")
                 
                 # Add Google Maps link & OSRM instructions
@@ -243,7 +261,24 @@ async def plan_trip(origin: str, destination: str, mode: str = "depart-after") -
                 r_name = route.get("name", "Bus")
                 r_num = route.get("key", "")
                 variant = seg.get("variant", {}).get("name", "")
+                
+                # Extract board/alight stop info
+                from_obj = seg.get("from", {})
+                to_obj = seg.get("to", {})
+                
+                board_at = "Unknown Stop"
+                if "stop" in from_obj:
+                    s = from_obj["stop"]
+                    board_at = f"{s.get('name')} (#{s.get('key')})"
+                    
+                alight_at = "Unknown Stop"
+                if "stop" in to_obj:
+                    s = to_obj["stop"]
+                    alight_at = f"{s.get('name')} (#{s.get('key')})"
+
                 result.append(f"  🚌 Ride {r_num} {r_name} ({variant})")
+                result.append(f"     Board at: {board_at}")
+                result.append(f"     Get off at: {alight_at}")
                 result.append(f"     ({r_time} mins) • {start_seg} - {end_seg}")
                 
             elif type_ == "transfer":
