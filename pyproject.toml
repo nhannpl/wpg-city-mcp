@@ -1,0 +1,18 @@
+[project]
+name = "wpg-city-mcp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "mcp[cli]>=1.25.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=7.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "mutmut>=3.4.0",
+]
